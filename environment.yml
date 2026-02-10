@@ -1,0 +1,23 @@
+name: weight_transfer
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pytorch-cuda=12.1
+  - wandb=0.22.0
+  - ipykernel
+  - ipywidgets
+  - torchmetrics
+  - numpy[version='<2']
+  - scikit-learn
+  - matplotlib
+  - pandas
+  - pytest
+  - pip
+  - pip:
+      - mup
+      - ucimlrepo
+      - datasets
