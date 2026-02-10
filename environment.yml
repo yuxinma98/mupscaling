@@ -21,3 +21,4 @@ dependencies:
       - mup
       - ucimlrepo
       - datasets
+      - transformers
