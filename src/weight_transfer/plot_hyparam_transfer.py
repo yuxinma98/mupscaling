@@ -4,17 +4,22 @@ Fetches runs from W&B and plots train loss vs learning rate for different hidden
 """
 
 import gc
+import pickle
 import numpy as np
 import matplotlib
+
 matplotlib.use('Agg')  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib.ticker import LogLocator, LogFormatterMathtext
 import wandb
 from pathlib import Path
-from weight_transfer import PLOT_DIR, WANDB_ENTITY
+from weight_transfer import PLOT_DIR, WANDB_ENTITY, DATA_DIR
 import pandas as pd
 
 Path(PLOT_DIR).mkdir(parents=True, exist_ok=True)
+CACHE_DIR = Path(DATA_DIR) / "wandb_cache"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
 matplotlib.rcParams["text.usetex"] = True
 matplotlib.rcParams["font.family"] = "serif"
 matplotlib.rcParams["font.serif"] = ["Computer Modern Roman"]
@@ -33,17 +38,25 @@ matplotlib.rcParams.update({
 })
 
 
-def fetch_wandb_data(optimizer="SGD", dataset="ForestCoverType", group="hyparam_transfer"):
+def fetch_wandb_data(optimizer="SGD", dataset="ForestCoverType", group="hyparam_transfer", use_cache=True):
     """
     Fetch run data from W&B for the specified optimizer and dataset.
-    
+
     Args:
         optimizer: Optimizer name (e.g., "SGD", "AdamW")
         dataset: Dataset name (e.g., "ForestCoverType")
-    
+        group: Group name in W&B
+        use_cache: Whether to use locally cached data
+
     Returns:
         Dictionary mapping hidden dimensions to lists of learning rates and train losses
     """
+    cache_file = CACHE_DIR / f"cache_{group}_{dataset}_{optimizer}.pkl"
+    if use_cache and cache_file.exists():
+        print(f"Loading cached data from {cache_file}")
+        with open(cache_file, "rb") as f:
+            return pickle.load(f)
+
     api = wandb.Api(timeout=60)
 
     try:
@@ -104,6 +117,11 @@ def fetch_wandb_data(optimizer="SGD", dataset="ForestCoverType", group="hyparam_
             if i % 50 == 0:
                 gc.collect()
 
+        if use_cache:
+            with open(cache_file, "wb") as f:
+                pickle.dump(data_by_n, f)
+            print(f"Cached data saved to {cache_file}")
+
         return data_by_n
 
     except Exception as e:
@@ -111,17 +129,22 @@ def fetch_wandb_data(optimizer="SGD", dataset="ForestCoverType", group="hyparam_
         return {}
 
 
-def fetch_wandb_data_transformer():
+def fetch_wandb_data_transformer(use_cache=True):
     """
     Fetch run data from W&B for the specified optimizer and dataset.
 
     Args:
-        optimizer: Optimizer name (e.g., "SGD", "AdamW")
-        dataset: Dataset name (e.g., "ForestCoverType")
+        use_cache: Whether to use locally cached data
 
     Returns:
         Dictionary mapping hidden dimensions to lists of learning rates and train losses
     """
+    cache_file = CACHE_DIR / "cache_transformer.pkl"
+    if use_cache and cache_file.exists():
+        print(f"Loading cached data from {cache_file}")
+        with open(cache_file, "rb") as f:
+            return pickle.load(f)
+
     api = wandb.Api(timeout=60)
     runs = api.runs(
         path="weight-transfer/fineweb-edu",
@@ -172,7 +195,13 @@ def fetch_wandb_data_transformer():
         if i % 50 == 0:
             gc.collect()
 
-    return fix_lr, fix_noise
+    data = (fix_lr, fix_noise)
+    if use_cache:
+        with open(cache_file, "wb") as f:
+            pickle.dump(data, f)
+        print(f"Cached data saved to {cache_file}")
+
+    return data
 
 
 def plot_train_loss_vs_lr(data_by_n, output_file="train_loss_vs_lr.png", y_log=False, figsize=(3, 4)):
@@ -185,6 +214,7 @@ def plot_train_loss_vs_lr(data_by_n, output_file="train_loss_vs_lr.png", y_log=F
         output_file: Output filename for the plot
     """
     plt.figure(figsize=figsize)
+    plt.subplots_adjust(left=0.25, bottom=0.2, right=0.98, top=0.98)
 
     # Prepare color mapping: color-blind friendly 'cividis' colormap.
     sorted_ns = sorted(data_by_n.keys())
@@ -243,8 +273,8 @@ def plot_train_loss_vs_lr(data_by_n, output_file="train_loss_vs_lr.png", y_log=F
         ticks = np.arange(loglr_start, loglr_end + 1)
         plt.xticks(ticks[::2], ha="right")
 
-    plt.xlabel(r"$\log_2(\text{learning rate }\overline{\gamma^\uparrow})$", fontsize=14)
-    plt.ylabel("Training loss", fontsize=14)
+    plt.xlabel(r"$\log_2(\text{Learning Rate }\overline{\gamma^\uparrow})$", fontsize=14)
+    plt.ylabel("Training Loss", fontsize=14)
     if all_lrs:
         plt.legend(fontsize=12)
     if y_log:
@@ -252,15 +282,14 @@ def plot_train_loss_vs_lr(data_by_n, output_file="train_loss_vs_lr.png", y_log=F
         plt.gca().yaxis.set_major_locator(LogLocator(base=10, numticks=4))
         plt.gca().yaxis.set_major_formatter(LogFormatterMathtext(base=10))
     plt.grid(True, alpha=0.3)
-    plt.tight_layout()
 
     # Save to file in plots directory
     base_name = output_file.rsplit(".", 1)[0]
     ext = output_file.rsplit(".", 1)[1]
     output_file = f"{base_name}_{figsize[0]}x{figsize[1]}.{ext}"
     output_path = f"{PLOT_DIR}/{output_file}"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.savefig(output_path.replace(f".{ext}", ".pdf"), dpi=300, bbox_inches="tight")
+    plt.savefig(output_path, dpi=300)
+    plt.savefig(output_path.replace(f".{ext}", ".pdf"), dpi=300)
     print(f"Plot saved to {output_path}")
     plt.close()  # Close the figure to free memory
 
@@ -275,6 +304,7 @@ def plot_train_loss_vs_noise(data_by_n, output_file="train_loss_vs_t.png", x_log
         output_file: Output filename for the plot
     """
     plt.figure(figsize=figsize)
+    plt.subplots_adjust(left=0.25, bottom=0.2, right=0.98, top=0.98)
 
     # Reuse same color mapping logic as for lr plot
     sorted_ns = sorted(data_by_n.keys())
@@ -334,9 +364,9 @@ def plot_train_loss_vs_noise(data_by_n, output_file="train_loss_vs_t.png", x_log
         plt.xlabel(r"$t$", fontsize=14)
     elif has_data and key == "noise_std":
         if x_log:
-            plt.xlabel(r"$\log_2(\text{noise std }\overline{\sigma_{\Delta}})$", fontsize=14)
+            plt.xlabel(r"$\log_2(\text{Noise std }\overline{\sigma_{\Delta}})$", fontsize=14)
         else:
-            plt.xlabel(r"$\text{noise std }\overline{\sigma}_{\Delta}$", fontsize=14)
+            plt.xlabel(r"$\text{Noise std }\overline{\sigma}_{\Delta}$", fontsize=14)
     else:
         plt.xlabel("Parameter", fontsize=14)
 
@@ -349,7 +379,7 @@ def plot_train_loss_vs_noise(data_by_n, output_file="train_loss_vs_t.png", x_log
                 ticks = np.arange(lognoise_start, lognoise_end + 1)
                 plt.xticks(ticks[::2], ha="right")
 
-    plt.ylabel("Training loss", fontsize=14)
+    plt.ylabel("Training Loss", fontsize=14)
     if has_data:
         plt.legend(fontsize=12)
     if y_log:
@@ -358,15 +388,14 @@ def plot_train_loss_vs_noise(data_by_n, output_file="train_loss_vs_t.png", x_log
         plt.gca().yaxis.set_major_formatter(LogFormatterMathtext(base=10))
     # plt.gca().yaxis.set_major_formatter(FormatStrFormatter("%.1f"))
     plt.grid(True, alpha=0.3)
-    plt.tight_layout()
 
     # Save to file in plots directory
     base_name = output_file.rsplit(".", 1)[0]
     ext = output_file.rsplit(".", 1)[1]
     output_file = f"{base_name}_{figsize[0]}x{figsize[1]}.{ext}"
     output_path = f"{PLOT_DIR}/{output_file}"
-    plt.savefig(output_path, dpi=300, bbox_inches="tight")
-    plt.savefig(output_path.replace(f".{ext}", ".pdf"), dpi=300, bbox_inches="tight")
+    plt.savefig(output_path, dpi=300)
+    plt.savefig(output_path.replace(f".{ext}", ".pdf"), dpi=300)
     print(f"Plot saved to {output_path}")
     plt.close()  # Close the figure to free memory
 
@@ -377,17 +406,17 @@ def main():
         data_by_n = fetch_wandb_data(optimizer=optimizer, dataset=dataset, group="hyparam_transfer_upscale_fix_noise(not_t)")
         if data_by_n:
             output_file = f"hyparam_transfer_upscale_fix_noise_{dataset}_{optimizer}(not_t).png"
-            plot_train_loss_vs_lr(data_by_n, output_file, y_log=True, figsize=(4, 4))
+            plot_train_loss_vs_lr(data_by_n, output_file, y_log=True, figsize=(4, 3))
 
         data_by_n = fetch_wandb_data(optimizer=optimizer, dataset=dataset, group="hyparam_transfer_upscale_fix_lr(not_t)")
         if data_by_n:
             output_file = f"hyparam_transfer_upscale_fix_lr_{dataset}_{optimizer}(not_t).png"
-            plot_train_loss_vs_noise(data_by_n, output_file, y_log=True, x_log=True if optimizer == "AdamW" else False, figsize=(4, 4))
+            plot_train_loss_vs_noise(data_by_n, output_file, y_log=True, x_log=True if optimizer == "AdamW" else False, figsize=(4, 3))
 
     fix_lr, fix_noise = fetch_wandb_data_transformer()
 
-    plot_train_loss_vs_lr(fix_noise, output_file="hyparam_transfer_fix_noise_transformer.png", figsize=(4, 4))
-    plot_train_loss_vs_noise(fix_lr, output_file="hyparam_transfer_fix_lr_transformer.png", x_log=True, figsize=(4, 4))
+    plot_train_loss_vs_lr(fix_noise, output_file="hyparam_transfer_fix_noise_transformer.png", figsize=(4, 3))
+    plot_train_loss_vs_noise(fix_lr, output_file="hyparam_transfer_fix_lr_transformer.png", x_log=True, figsize=(4, 3))
 
 if __name__ == "__main__":
     main()

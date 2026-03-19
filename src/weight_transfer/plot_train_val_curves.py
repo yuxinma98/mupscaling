@@ -82,4 +82,5 @@ if __name__ == "__main__":
                 fname=f"{PLOT_DIR}/GPT_{args.optimizer}_{metric.replace('/', '_')}.png",
                 ylim=None,
                 one_run=args.one_run,
+                xlim=(0, 10000),
             )

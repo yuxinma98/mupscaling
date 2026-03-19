@@ -23,7 +23,7 @@ METRIC_LABELS = {
 
 
 def plot_multiple_run_groups(
-    entity, project, run_id_groups, labels, metric_name="epoch/val_acc", fname=f"{PLOT_DIR}/multiple_groups.png", ylog=False, ylim=None, one_run=False
+    entity, project, run_id_groups, labels, metric_name="epoch/val_acc", fname=f"{PLOT_DIR}/multiple_groups.png", ylog=False, ylim=None, one_run=False, xlim=None
 ):
     """
     Fetches a specific metric from multiple groups of runs, calculates mean and std dev for each group,
@@ -106,6 +106,8 @@ def plot_multiple_run_groups(
         plt.yscale("log")
     if ylim is not None:
         plt.ylim(ylim)
+    if xlim is not None:
+        plt.xlim(xlim)
 
     plt.tight_layout()
     if one_run:
