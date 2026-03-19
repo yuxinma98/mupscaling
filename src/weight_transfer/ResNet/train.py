@@ -161,7 +161,7 @@ def create_and_train_model(output_dim, config, train_loader, val_loader, stop_lo
     return trained_model
 
 
-def setup_transfer_models(output_dim, narrow_hidden_dim, wide_hidden_dim, state_dict, noise_std, base_width=1):
+def setup_transfer_models(output_dim, narrow_hidden_dim, wide_hidden_dim, state_dict, noise_std, base_width=1, noise_dict=None):
     """
     Helper function to create, initialize, and transfer weights from a narrow model to a wide model.
     """
@@ -170,17 +170,42 @@ def setup_transfer_models(output_dim, narrow_hidden_dim, wide_hidden_dim, state_
     narrow_model.load_state_dict(state_dict)
     narrow_model.to(torch.device(device))
 
-    # Create and initialize wide model
-    wide_model = create_ResNet(output_dim, wm=wide_hidden_dim, init_std=noise_std, base_width=base_width)
-    wide_model.to(torch.device(device))
+    if noise_dict is None:
+        # Create and initialize wide model
+        wide_model = create_ResNet(output_dim, wm=wide_hidden_dim, init_std=noise_std, base_width=base_width)
+        wide_model.to(torch.device(device))
+        # Transfer weights
+        if base_width is None:
+            transfer_weights_sp(narrow_model, wide_model)
+        else:
+            transfer_weights(narrow_model, wide_model)
+    else:
+        wide_model_noise = create_ResNet(output_dim, wm=wide_hidden_dim, init_std=1, base_width=base_width)
+        wide_model_noise.to(torch.device(device))
+        wide_model_transfer = create_ResNet(output_dim, wm=wide_hidden_dim, init_std=1, base_width=base_width)
+        wide_model_transfer.to(torch.device(device))
+        for param in wide_model_transfer.parameters():
+            param.data.zero_()
+        if base_width is None:
+            transfer_weights_sp(narrow_model, wide_model_transfer)
+        else:
+            transfer_weights(narrow_model, wide_model_transfer)
 
-    # Transfer weights
-    transfer_weights(narrow_model, wide_model)
-
+        wide_model = create_ResNet(output_dim, wm=wide_hidden_dim, init_std=1, base_width=base_width)
+        wide_model.to(torch.device(device))
+        for (name, param), param_transfer, param_noise in zip(
+            wide_model.named_parameters(), wide_model_transfer.parameters(), wide_model_noise.parameters()
+        ):
+            if torch.allclose(param_noise.data, torch.zeros_like(param_noise.data)):
+                param.data = param_transfer.data
+            else:
+                std = torch.tensor(noise_dict[name]).to(param.data.device)
+                noise = param_noise.data * std
+                param.data = param_transfer.data + noise
     return narrow_model, wide_model
 
 
-def setup_transfer_models_normalized_spectral(output_dim, narrow_hidden_dim, wide_hidden_dim, state_dict, t, base_width=1):
+def setup_transfer_models_normalized_spectral(output_dim, narrow_hidden_dim, wide_hidden_dim, state_dict, t, base_width=1, return_noise_dict=False):
     """
     Helper function to create, initialize, and transfer weights from a narrow model to a wide model.
     """
@@ -204,21 +229,28 @@ def setup_transfer_models_normalized_spectral(output_dim, narrow_hidden_dim, wid
         transfer_weights(narrow_model, wide_model_transfer)
     wide_model = create_ResNet(output_dim, wm=wide_hidden_dim, init_std=1, base_width=base_width)
     wide_model.to(torch.device(device))
-    for param, param_transfer, param_noise in zip(wide_model.parameters(), wide_model_transfer.parameters(), wide_model_noise.parameters()):
+
+    noise_dict = {}
+    for (name, param), param_transfer, param_noise in zip(
+        wide_model.named_parameters(), wide_model_transfer.parameters(), wide_model_noise.parameters()
+    ):
         if torch.allclose(param_noise.data, torch.zeros_like(param_noise.data)):
             param.data = param_transfer.data
         else:  # scale noise to match (spectral) norm of transferred weights
             if len(param.data.shape) == 1:
-                noise = param_noise.data / torch.linalg.vector_norm(param_noise.data, ord=2) * torch.linalg.vector_norm(param_transfer.data, ord=2)
+                std = torch.linalg.vector_norm(param_transfer.data, ord=2) / torch.linalg.vector_norm(param_noise.data, ord=2)
+                noise = param_noise.data * std
+                noise_dict[name] = std * t
             else:
-                noise = (
-                    param_noise.data
-                    / torch.linalg.norm(param_noise.data, ord=2, dim=(0, 1))
-                    * torch.linalg.norm(param_transfer.data, ord=2, dim=(0, 1))
-                )
+                std = torch.linalg.norm(param_transfer.data, ord=2, dim=(0, 1)) / torch.linalg.norm(param_noise.data, ord=2, dim=(0, 1))
+                noise = param_noise.data * std
+                noise_dict[name] = std * t
             param.data = param_transfer.data + t * noise
 
-    return narrow_model, wide_model
+    if return_noise_dict:
+        return narrow_model, wide_model, noise_dict
+    else:
+        return narrow_model, wide_model
 
 
 def setup_transfer_optimizers(optimizer, lr, weight_decay, optimizer_state_dict, narrow_model, wide_model, momentum=0.0, sp=False):
@@ -238,12 +270,22 @@ def setup_transfer_optimizers(optimizer, lr, weight_decay, optimizer_state_dict,
     return wide_optimizer
 
 
-def load_upscale_and_train_model(output_dim, config, train_loader, val_loader, state_dict, optimizer_state_dict, stop_loss=None, path=None, base_width=1):
+def load_upscale_and_train_model(
+    output_dim, config, train_loader, val_loader, state_dict, optimizer_state_dict, stop_loss=None, path=None, base_width=1, noise_dict=None
+):
     """
     Helper function to load a narrow model from state dict, create a wide model by upscaling, transfer weights, and continue training.
     """
+    if noise_dict is not None:
+        config["noise_std"] = 1
     narrow_model, wide_model = setup_transfer_models(
-        output_dim, config["hidden_dim"], config["hidden_dim"] * config["multiplier"], state_dict, config["noise_std"], base_width
+        output_dim,
+        config["hidden_dim"],
+        config["hidden_dim"] * config["multiplier"],
+        state_dict,
+        config["noise_std"],
+        base_width,
+        noise_dict=noise_dict,
     )
     wide_optimizer = setup_transfer_optimizers(
         config["optimizer"], config["lr"], config["weight_decay"], optimizer_state_dict, narrow_model, wide_model, config["momentum"], 
@@ -268,15 +310,22 @@ def load_upscale_and_train_model(output_dim, config, train_loader, val_loader, s
 
 
 def load_upscale_and_train_model_normalized_noise_spectral(
-    output_dim, config, train_loader, val_loader, state_dict, optimizer_state_dict, stop_loss=None, path=None, base_width=1
+    output_dim, config, train_loader, val_loader, state_dict, optimizer_state_dict, stop_loss=None, path=None, base_width=1, return_noise_dict=False
 ):
     """
     Helper function to load a narrow model from state dict, create a wide model by upscaling, transfer weights, and continue training.
-    Here the noise is normalized wrt the transferred weights. i.e. noise <- noise * \|W_transfer|\
+    Here the noise is normalized wrt the transferred weights. i.e. noise <- noise * \|W_transfer\|
     """
-    narrow_model, wide_model = setup_transfer_models_normalized_spectral(
-        output_dim, config["hidden_dim"], config["hidden_dim"] * config["multiplier"], state_dict, config["t"], base_width
+    transfer_model_outputs = setup_transfer_models_normalized_spectral(
+        output_dim,
+        config["hidden_dim"],
+        config["hidden_dim"] * config["multiplier"],
+        state_dict,
+        config["t"],
+        base_width,
+        return_noise_dict=return_noise_dict,
     )
+    narrow_model, wide_model = transfer_model_outputs[:2]
     wide_optimizer = setup_transfer_optimizers(
         config["optimizer"],
         config["lr"],
@@ -304,4 +353,7 @@ def load_upscale_and_train_model_normalized_noise_spectral(
         lr_total_iters=config.get("lr_total_iters",500),
     )
 
-    return trained_model
+    if return_noise_dict:
+        return trained_model, transfer_model_outputs[2]
+    else:
+        return trained_model

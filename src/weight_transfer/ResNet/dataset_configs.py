@@ -5,11 +5,11 @@ Dataset-specific configuration parameters for weight transfer experiments.
 DATASET_CONFIGS = {
     ("CIFAR100", "SGD"): {
         "n": 0.5,
-        "N": 1,
+        "N": 2,
         "k": 2,
         "seed": 0,
         "batch_size": 128,
-        "epochs": 100,
+        "epochs": 300,
         "lr_bf": 0.005,
         "lr_af": 0.005,
         "weight_decay": 1e-4,
