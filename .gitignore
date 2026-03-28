@@ -214,3 +214,5 @@ src/coord_check_plots
 plots/
 
 GEMINI.md
+CLAUDE.md
+.claude

@@ -119,11 +119,11 @@ if __name__ == "__main__":
             path=f"{WANDB_ENTITY}/weight_transfer2",
             filters={"group": f"base_model_{best_run.id}"},
         )
-        if len(runs) > 0:
+        if len(runs) == 5:
             run_id = sorted(runs, key=lambda run: float(run.summary.get("epoch/val_loss", {}).get("min", float("inf"))))[len(runs) // 2].id
     if not run_id:
         val_losses = {}
-        for seed in range(1):
+        for seed in range(5):
             config["seed"] = seed
             wandb.init(
                 project="weight_transfer2", config=config, reinit="finish_previous", name=f"base_model_seed_{seed}", group=f"base_model_{best_run.id}"
@@ -156,8 +156,8 @@ if __name__ == "__main__":
             path=f"{WANDB_ENTITY}/weight_transfer2",
             filters={"group": f"large_model_from_scratch_{best_run.id}"},
         )
-    if not args.read_wandb or len(runs) == 0:
-        for seed in range(1):
+    if not args.read_wandb or len(runs) < 5:
+        for seed in range(5):
             config["seed"] = seed
             wandb.init(
                 project="weight_transfer2",
@@ -284,19 +284,19 @@ if __name__ == "__main__":
             filters={"group": f"large_model_upscaled_normalized_noise_{best_run.id}"},
         )
 
-    # if not args.read_wandb or len(runs) == 0:
-    for seed in range(1):
-        config["seed"] = seed
-        wandb.init(
-            project="weight_transfer2",
-            config=config,
-            reinit="finish_previous",
-            name=f"large_model_upscaled_normalized_noise_seed_{seed}",
-            group=f"large_model_upscaled_normalized_noise_{best_run.id}",
-        )
-        fix_seed(config["seed"])
-        train_loader, val_loader, output_dim = get_data_loaders_CNN(dataset, DATA_DIR, dataset_config["batch_size"])
-        wide_model = load_upscale_and_train_model(
-            output_dim, config, train_loader, val_loader, base_model_state_dict, optimizer_state_dict, noise_dict=best_noise_dict
-        )
-        wandb.finish()
+    if not args.read_wandb or len(runs) < 5:
+        for seed in range(5):
+            config["seed"] = seed
+            wandb.init(
+                project="weight_transfer2",
+                config=config,
+                reinit="finish_previous",
+                name=f"large_model_upscaled_normalized_noise_seed_{seed}",
+                group=f"large_model_upscaled_normalized_noise_{best_run.id}",
+            )
+            fix_seed(config["seed"])
+            train_loader, val_loader, output_dim = get_data_loaders_CNN(dataset, DATA_DIR, dataset_config["batch_size"])
+            wide_model = load_upscale_and_train_model(
+                output_dim, config, train_loader, val_loader, base_model_state_dict, optimizer_state_dict, noise_dict=best_noise_dict
+            )
+            wandb.finish()
